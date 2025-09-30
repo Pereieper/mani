@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Online Exam Management</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 20px; }
+  h1,h2,h3 { margin-top: 20px; }
+  table { border-collapse: collapse; width: 90%; margin-top: 10px; }
+  th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+  th { background-color: #f2f2f2; }
+  input, select, button { margin: 5px 0; padding: 5px; }
+  #app { display: none; }
+  #authBox { display: flex; gap: 40px; }
+  #authBox div { border: 1px solid #ccc; padding: 20px; border-radius: 8px; }
+</style>
+</head>
+<body>
+
+<h1>Online Exam Management</h1>
+
+<!-- AUTH -->
+<div id="authBox">
+  <div>
+    <h2>Register</h2>
+    <input type="text" id="regContact" placeholder="Contact (email/phone)"><br>
+    <input type="text" id="regFullname" placeholder="Full Name"><br>
+    <input type="password" id="regPassword" placeholder="Password"><br>
+    <select id="regRole">
+      <option value="student">Student</option>
+      <option value="teacher">Teacher</option>
+      <option value="admin">Admin</option>
+    </select><br>
+    <button onclick="register()">Register</button>
+  </div>
+  <div>
+    <h2>Login</h2>
+    <input type="text" id="loginContact" placeholder="Contact (email/phone)"><br>
+    <input type="password" id="loginPassword" placeholder="Password"><br>
+    <button onclick="login()">Login</button>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+
+  <!-- STUDENTS -->
+  <h2>Students</h2>
+  <div id="studentControls">
+    <input type="text" id="studentNumber" placeholder="Student Number">
+    <input type="text" id="studentName" placeholder="Name">
+    <input type="email" id="studentEmail" placeholder="Email">
+    <input type="number" id="studentAge" placeholder="Age">
+    <input type="number" id="studentGrade" placeholder="Grade">
+    <button onclick="addStudent()">Add Student</button>
+    <button onclick="getStudents()">Refresh Students</button>
+  </div>
+
+  <table id="studentsTable">
+    <thead>
+      <tr>
+        <th>ID</th><th>Student Number</th><th>Name</th><th>Email</th><th>Age</th><th>Grade</th><th>Actions</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <!-- STUDENT RESULTS -->
+  <div id="studentResultsBox" style="display:none;">
+    <h3>My Results</h3>
+    <table>
+      <thead><tr><th>Exam</th><th>Score</th></tr></thead>
+      <tbody id="myResults"></tbody>
+    </table>
+  </div>
+
+  <!-- EXAMS -->
+  <h2>Exams</h2>
+  <div id="examControls">
+    <input type="text" id="examTitle" placeholder="Exam Title">
+    <input type="number" id="examMarks" placeholder="Total Marks">
+    <button onclick="addExam()">Add Exam</button>
+    <button onclick="getExams()">Refresh Exams</button>
+  </div>
+
+  <table id="examsTable">
+    <thead><tr><th>ID</th><th>Title</th><th>Total Marks</th><th>Actions</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <!-- <h2>Results</h2> -->
+  <div id="resultControls">
+    <label>Student:</label>
+    <select id="resultStudent"></select>
+    <label>Exam:</label>
+    <select id="resultExam"></select>
+    <input type="number" id="resultScore" placeholder="Score">
+    <button onclick="addResult()">Add Result</button>
+    <button onclick="getResults()">Refresh Results</button>
+  </div>
+  <table id="resultsTable">
+    <thead><tr><th>ID</th><th>Student</th><th>Exam</th><th>Score</th><th>Actions</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+</div>
+
+<script>
+const API_BASE = "";
+const REGISTER_API = API_BASE + "/auth/register";
+const LOGIN_API = API_BASE + "/auth/login";
+const STUDENTS_API = API_BASE + "/students";
+const EXAMS_API = API_BASE + "/exams";
+const RESULTS_API = API_BASE + "/results";
+
+let token = null, role = null, userId = null, studentId = null;
+
+function authHeaders() {
+  return { "Content-Type": "application/json", "Authorization": "Bearer " + token };
+}
+
+// ---------------- AUTH ----------------
+async function register() {
+  const contact = document.getElementById("regContact").value.trim();
+  const fullname = document.getElementById("regFullname").value.trim();
+  const password = document.getElementById("regPassword").value.trim();
+  const role = document.getElementById("regRole").value;
+  if(!contact||!fullname||!password) return alert("Fill all fields");
+  try {
+    const res = await fetch(REGISTER_API, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({contact, fullname, password, role})
+    });
+    if(res.ok) alert("Registration successful!"); 
+    else { const err=await res.json(); alert("Register failed: "+err.detail); }
+  } catch(e){ alert("Error registering"); }
+}
+
+async function login() {
+  const contact = document.getElementById("loginContact").value.trim();
+  const password = document.getElementById("loginPassword").value.trim();
+  if(!contact||!password) return alert("Enter contact & password");
+
+  try {
+    const res = await fetch(LOGIN_API, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({contact, password})
+    });
+    if(res.ok) {
+      const data = await res.json();
+      token = data.access_token; 
+      role = data.role; 
+      userId = data.user_id;
+
+      // STUDENT: find linked studentId
+      if(role === "student") {
+        const studentsRes = await fetch(STUDENTS_API, { headers: authHeaders() });
+        const students = await studentsRes.json();
+        const myStudent = students.find(s => s.user_id === userId)
+                        || students.find(s => s.contact === contact)
+                        || students[0];
+        if(myStudent) studentId = myStudent.id;
+      }
+
+      document.getElementById("authBox").style.display="none";
+      document.getElementById("app").style.display="block";
+      setupRoleUI();
+      getStudents();
+      getExams();
+      getResults();
+    } else {
+      const err = await res.json();
+      alert("Login failed: " + err.detail);
+    }
+  } catch(e) {
+    alert("Error logging in");
+  }
+}
+
+// ---------------- ROLE UI ----------------
+function setupRoleUI() {
+  if(role==="student") {
+    document.getElementById("studentControls").style.display="none";
+    document.getElementById("examControls").style.display="none";
+    document.getElementById("resultControls").style.display="none";
+    document.getElementById("studentResultsBox").style.display="block";
+  } else if(role==="teacher") {
+    document.getElementById("studentControls").style.display="none";
+  }
+}
+
+// ---------------- STUDENTS ----------------
+async function getStudents() {
+  try {
+    const res = await fetch(STUDENTS_API, { headers: authHeaders() });
+    if (!res.ok) throw new Error("Failed to fetch students");
+    const students = await res.json();
+    const tbody = document.querySelector("#studentsTable tbody");
+    const sel = document.getElementById("resultStudent");
+    tbody.innerHTML = ""; sel.innerHTML = "";
+
+    students.forEach(s => {
+      const studentNumberEsc = (s.student_number || "").replace(/'/g, "\\'");
+      const nameEsc = (s.name || "").replace(/'/g, "\\'");
+      const emailEsc = (s.email || "").replace(/'/g, "\\'");
+      const ageVal = s.age || 0;
+      const gradeVal = s.grade || 0;
+
+      tbody.innerHTML += `<tr>
+        <td>${s.id}</td>
+        <td>${s.student_number}</td>
+        <td>${s.name}</td>
+        <td>${s.email || ""}</td>
+        <td>${s.age}</td>
+        <td>${s.grade || ""}</td>
+        <td>${role === "admin" ? `
+          <button onclick="editStudent(${s.id}, '${studentNumberEsc}', '${nameEsc}', '${emailEsc}', ${ageVal}, ${gradeVal})">Edit</button>
+          <button onclick="deleteStudent(${s.id})">Delete</button>` : ""}</td>
+      </tr>`;
+
+      if(role!=="student") sel.innerHTML += `<option value="${s.id}">${s.name}</option>`;
+    });
+
+  } catch (e) { console.error(e); alert("Error loading students"); }
+}
+
+async function addStudent() {
+  if(role!=="admin") return alert("No permission");
+  const student_number = document.getElementById("studentNumber").value.trim();
+  const name = document.getElementById("studentName").value.trim();
+  const email = document.getElementById("studentEmail").value.trim();
+  const age = parseInt(document.getElementById("studentAge").value);
+  const grade = parseFloat(document.getElementById("studentGrade").value)||null;
+  if(!student_number||!name||!age) return alert("Required fields missing");
+  try {
+    const res = await fetch(STUDENTS_API,{
+      method:"POST",headers:authHeaders(),
+      body:JSON.stringify({student_number,name,email,age,grade})
+    });
+    if(res.ok) getStudents(); else { const err=await res.json(); alert(err.detail); }
+  } catch(e){ alert("Error adding student"); }
+}
+
+async function editStudent(id, student_number, name, email, age, grade) {
+  if(role!=="admin") return alert("No permission");
+  const newName = prompt("Name:", name);
+  const newAge = prompt("Age:", age);
+  const newGrade = prompt("Grade:", grade);
+  if(newName===null||newAge===null) return;
+  try {
+    const res = await fetch(`${STUDENTS_API}/${id}`, {
+      method: "PUT",
+      headers: authHeaders(),
+      body: JSON.stringify({
+        student_number,
+        name: newName.trim(),
+        email,
+        age: parseInt(newAge),
+        grade: parseFloat(newGrade)
+      })
+    });
+    if(res.ok){ alert("Student updated"); getStudents(); }
+    else { const err = await res.json(); alert("Error updating: " + err.detail); }
+  } catch(e){ alert("Error updating student"); }
+}
+
+async function deleteStudent(id) {
+  if(role!=="admin") return alert("No permission");
+  if(!confirm("Delete student?")) return;
+  try {
+    const res = await fetch(`${STUDENTS_API}/${id}`, { method:"DELETE", headers:authHeaders() });
+    if(res.ok){ alert("Student deleted"); getStudents(); }
+    else { const err = await res.json(); alert("Error deleting: " + err.detail); }
+  } catch(e){ alert("Error deleting student"); }
+}
+
+// ---------------- EXAMS ----------------
+async function getExams() {
+  try {
+    const res = await fetch(EXAMS_API, { headers: authHeaders() });
+    if(!res.ok) throw new Error("Failed to fetch exams");
+    const exams = await res.json();
+    const tbody = document.querySelector("#examsTable tbody");
+    const examSelect = document.getElementById("resultExam");
+    tbody.innerHTML=""; examSelect.innerHTML="";
+
+    exams.forEach(e=>{
+      tbody.innerHTML += `<tr>
+        <td>${e.id}</td><td>${e.title}</td><td>${e.total_marks}</td>
+        <td>${(role==="admin"||role==="teacher")?`
+          <button onclick="editExam(${e.id},'${e.title}',${e.total_marks})">Edit</button>
+          <button onclick="deleteExam(${e.id})">Delete</button>`:""}</td>
+      </tr>`;
+      if(role!=="student") examSelect.innerHTML += `<option value="${e.id}">${e.title}</option>`;
+    });
+  } catch(e){ console.error(e); alert("Error loading exams"); }
+}
+
+async function addExam() {
+  if(!(role==="admin"||role==="teacher")) return alert("No permission");
+  const title = document.getElementById("examTitle").value.trim();
+  const total = parseInt(document.getElementById("examMarks").value);
+  if(!title||!total) return alert("Title and total marks required");
+
+  try {
+    const res = await fetch(EXAMS_API, {method:"POST", headers:authHeaders(), body:JSON.stringify({title,total_marks:total})});
+    if(res.ok){ alert("Exam added"); getExams(); }
+    else { const err = await res.json(); alert("Error adding exam: "+err.detail); }
+  } catch(e){ alert("Error adding exam"); }
+}
+
+async function editExam(id,title,total) {
+  if(!(role==="admin"||role==="teacher")) return alert("No permission");
+  const newTitle = prompt("Title:", title);
+  const newTotal = prompt("Total Marks:", total);
+  if(newTitle===null||newTotal===null) return;
+  try {
+    const res = await fetch(`${EXAMS_API}/${id}`, {method:"PUT", headers:authHeaders(), body:JSON.stringify({title:newTitle.trim(),total_marks:parseInt(newTotal)})});
+    if(res.ok){ alert("Exam updated"); getExams(); }
+    else { const err = await res.json(); alert("Error updating exam: "+err.detail); }
+  } catch(e){ alert("Error updating exam"); }
+}
+
+async function deleteExam(id){
+  if(!(role==="admin"||role==="teacher")) return alert("No permission");
+  if(!confirm("Delete exam?")) return;
+  try {
+    const res = await fetch(`${EXAMS_API}/${id}`, {method:"DELETE", headers:authHeaders()});
+    if(res.ok){ alert("Deleted"); getExams(); }
+    else { const err = await res.json(); alert("Error deleting exam: "+err.detail); }
+  } catch(e){ alert("Error deleting exam"); }
+}
+
+// ---------------- RESULTS ----------------
+async function getResults() {
+  try {
+    const res = await fetch(RESULTS_API, { headers: authHeaders() });
+    if (!res.ok) throw new Error("Failed to fetch results");
+
+    const results = await res.json();
+    const tbody = document.querySelector("#resultsTable tbody");
+    const myResults = document.getElementById("myResults");
+    tbody.innerHTML = "";
+    if(role==="student") myResults.innerHTML = "";
+
+    results.forEach(r => {
+      if(role==="admin"||role==="teacher") {
+        tbody.innerHTML += `<tr>
+          <td>${r.id}</td>
+          <td>${r.student_name||r.student_id}</td>
+          <td>${r.exam_title||r.exam_id}</td>
+          <td>${r.score}</td>
+          <td>${(role==="admin"||role==="teacher")?`
+            <button onclick="editResult(${r.id},${r.student_id},${r.exam_id},${r.score})">Edit</button>
+            <button onclick="deleteResult(${r.id})">Delete</button>`:""}</td>
+        </tr>`;
+      } else if(r.student_id === studentId) {
+        myResults.innerHTML += `<tr>
+          <td>${r.exam_title}</td>
+          <td>${r.score}</td>
+        </tr>`;
+      }
+    });
+
+    if(role==="student") {
+      document.getElementById("resultsTable").style.display="none";
+      document.getElementById("resultControls").style.display="none";
+    } else {
+      document.getElementById("resultsTable").style.display="table";
+      document.getElementById("resultControls").style.display="block";
+    }
+
+  } catch(e) { console.error(e); alert("Error loading results"); }
+}
+
+// ---------------- ADD/EDIT/DELETE RESULTS ----------------
+async function addResult() {
+  if(!(role==="admin"||role==="teacher")) return alert("No permission");
+  const student_id = parseInt(document.getElementById("resultStudent").value);
+  const exam_id = parseInt(document.getElementById("resultExam").value);
+  const score = parseFloat(document.getElementById("resultScore").value);
+  if(!student_id||!exam_id||isNaN(score)) return alert("All fields required");
+
+  try {
+    const res = await fetch(RESULTS_API, {method:"POST", headers:authHeaders(), body:JSON.stringify({student_id,exam_id,score})});
+    if(res.ok){ alert("Result added"); getResults(); }
+    else { const err = await res.json(); alert("Error adding result: "+err.detail); }
+  } catch(e){ alert("Error adding result"); }
+}
+
+async function editResult(id, student_id, exam_id, score){
+  if(!(role==="admin"||role==="teacher")) return alert("No permission");
+  const newStudent = parseInt(prompt("Student ID:", student_id));
+  const newExam = parseInt(prompt("Exam ID:", exam_id));
+  const newScore = parseFloat(prompt("Score:", score));
+  if(isNaN(newStudent)||isNaN(newExam)||isNaN(newScore)) return;
+
+  try {
+    const res = await fetch(`${RESULTS_API}/${id}`, {method:"PUT", headers:authHeaders(), body:JSON.stringify({student_id:newStudent,exam_id:newExam,score:newScore})});
+    if(res.ok){ alert("Result updated"); getResults(); }
+    else { const err = await res.json(); alert("Error updating result: "+err.detail); }
+  } catch(e){ alert("Error updating result"); }
+}
+
+async function deleteResult(id){
+  if(!(role==="admin"||role==="teacher")) return alert("No permission");
+  if(!confirm("Delete result?")) return;
+  try {
+    const res = await fetch(`${RESULTS_API}/${id}`, {method:"DELETE", headers:authHeaders()});
+    if(res.ok){ alert("Deleted"); getResults(); }
+    else { const err = await res.json(); alert("Error deleting result: "+err.detail); }
+  } catch(e){ alert("Error deleting result"); }
+}
+</script>
+
+</body>
+</html>
